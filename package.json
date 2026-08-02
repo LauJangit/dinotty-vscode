@@ -1,0 +1,90 @@
+{
+  "name": "dinotty-vscode",
+  "displayName": "Dinotty",
+  "description": "Connect VS Code terminals to Dinotty sessions.",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "extensionKind": [
+    "ui"
+  ],
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "scripts": {
+    "compile": "tsc -p ./",
+    "typecheck": "tsc -p ./",
+    "test": "node test/run-tests.js",
+    "check": "npm run typecheck && npm test && npm run package",
+    "watch": "tsc -watch -p ./",
+    "package": "node esbuild.js --production"
+  },
+  "activationEvents": [
+    "onTerminalProfile:dinotty.terminal",
+    "onCommand:dinotty.configureServer",
+    "onCommand:dinotty.testConnection"
+  ],
+  "contributes": {
+    "terminal": {
+      "profiles": [
+        {
+          "id": "dinotty.terminal",
+          "title": "Dinotty"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "dinotty.configureServer",
+        "title": "Dinotty: Configure Server"
+      },
+      {
+        "command": "dinotty.testConnection",
+        "title": "Dinotty: Test Connection"
+      }
+    ],
+    "configuration": {
+      "title": "Dinotty",
+      "properties": {
+        "dinotty.serverUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8999",
+          "description": "Dinotty backend server URL."
+        },
+        "dinotty.terminalAppearanceMode": {
+          "type": "string",
+          "enum": [
+            "native",
+            "base",
+            "exact"
+          ],
+          "enumDescriptions": [
+            "Use the native VS Code terminal theme without injecting color OSC sequences.",
+            "Apply only Dinotty foreground, background, and cursor colors.",
+            "Apply Dinotty foreground, background, cursor, and ANSI palette colors."
+          ],
+          "default": "native",
+          "description": "Controls per-terminal Dinotty color synchronization. Changes apply to newly created terminals."
+        },
+        "dinotty.syncAppearanceFromDinotty": {
+          "type": "boolean",
+          "default": true,
+          "deprecationMessage": "Use dinotty.terminalAppearanceMode instead. An explicitly configured true value maps to exact; false maps to native.",
+          "description": "Deprecated compatibility setting for Dinotty terminal colors."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "ws": "^8"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/vscode": "1.90.0",
+    "@types/ws": "^8",
+    "esbuild": "^0.25",
+    "typescript": "^5"
+  }
+}
