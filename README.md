@@ -1,99 +1,226 @@
-# Dinotty VS Code
+# Dinotty for VS Code
 
-Dinotty VS Code 在 VS Code 中管理多个 Dinotty 连接，并把每个连接打开为原生 Integrated Terminal。扩展只充当客户端：打开连接会调用 `POST /api/tabs` 新建远端 tab/pane；关闭 VS Code terminal 只断开本地 endpoint，不删除远端 tab。
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-## 兼容性
+Dinotty terminals, seamlessly integrated into VS Code.
 
-- VS Code `1.90.0` 或更高版本。
-- Dinotty `v0.18.0` 或更高版本；最低要求对应引入 `snapshot_request`、`replay_begin/replay_end` 的提交 `8bcee3186ea900f458ff4cb23bc56804b0bd3ae1`。
-- HTTP 和 WebSocket 鉴权使用 `Authorization: Bearer <access-code>`。
+Dinotty for VS Code brings Dinotty-powered terminal sessions into VS Code's
+integrated terminal. Opening a connection creates a new Dinotty tab and pane,
+then presents that terminal through the standard VS Code terminal UI with
+replay-aware rendering, geometry synchronization, and automatic reconnection.
 
-## 使用
+> [!IMPORTANT]
+> This extension is a terminal client for Dinotty, not a full Dinotty
+> administration interface. It does not browse or manage existing tabs and
+> panes. The **Connections** view stores local server profiles used to open new
+> terminals.
 
-1. 在 Activity Bar 打开 Dinotty 的 `Connections` 视图。
-2. 选择 `Add Connection`，依次填写 HTTP(S) 地址、显示名称和可选 access code。
-3. 单击连接项，或从命令面板运行 `Dinotty: Connect`，创建并显示目标 terminal。
-4. 也可以在 terminal profile 列表选择 `Dinotty`；存在多个连接时会先显示连接选择器。
+## Features
 
-连接项右键菜单提供 Connect、Test Connection、Set as Default、Edit 和 Delete。第一条连接自动成为默认项；默认项会在多连接选择器中置顶，但不会绕过用户选择。
+- **Integrated terminal experience** - Open Dinotty from the Activity Bar,
+  Command Palette, or VS Code terminal profile menu.
+- **Multiple server profiles** - Save, test, edit, and select Dinotty
+  endpoints without putting credentials in workspace settings.
+- **Secure credentials** - Access codes are stored in VS Code SecretStorage and
+  are redacted from titles, logs, state files, and error messages.
+- **Reliable terminal rendering** - Snapshot replay and synchronized output are
+  committed atomically so partial frames are not shown in the terminal.
+- **Responsive terminal sizing** - Remote geometry is coordinated with the
+  current VS Code panel, including recovery when the remote terminal is larger
+  than the available space.
+- **Resilient sessions** - Temporary WebSocket failures reconnect to the same
+  Dinotty pane with bounded exponential backoff.
+- **Optional appearance sync** - Use the native VS Code theme or import base and
+  ANSI colors from Dinotty for each newly opened terminal.
 
-工作区的第一个本地 `file:` folder 会作为新 tab 的 cwd。Remote SSH、WSL 和 Container 路径不会自动映射到本机 Dinotty。
+## Requirements
 
-## 连接与凭据存储
+- VS Code `1.90.0` or newer.
+- Dinotty `v0.18.0` or newer.
+- A reachable Dinotty HTTP(S) endpoint.
 
-- 连接名称、规范化地址、顺序和默认项保存在扩展的 `globalStorageUri/connection-store-v1.json`，不会写入 workspace settings。
-- access code 只保存在 VS Code `SecretStorage` 的随机 slot；state file、TreeView、terminal title、Output channel 和错误消息都不包含凭据。
-- 每个 terminal 在创建时冻结 `{ profileId, name, serverUrl, accessToken }` 快照。之后编辑或删除连接只影响新 terminal，已经打开的 terminal 仍连接原目标。
-- profile 声明了 credential slot 但 SecretStorage 中的值缺失时，该 profile 不会降级为无鉴权请求；请通过 Edit 明确 Replace 或 Clear。
-- loopback HTTP (`localhost`、`127.0.0.0/8`、`::1`) 可以使用 access code。非 loopback HTTP 会显示明文传输警告，而且不能保存 access code；远端鉴权请使用 HTTPS。
+The minimum Dinotty version must include `snapshot_request` and
+`replay_begin`/`replay_end` support, introduced by Dinotty commit
+`8bcee3186ea900f458ff4cb23bc56804b0bd3ae1`.
 
-首次升级时，扩展只尝试迁移显式 global `dinotty.serverUrl`，并读取旧固定 secret。URL-only 会迁移为无鉴权连接；token-only、只有 workspace URL 或确定无效的组合不会被猜测绑定到某个地址，而会保留旧值并提示手动添加。成功提交新 store 后，旧 global setting 和 fixed secret 各进行一次 best-effort 清理。
+## Installation
 
-## 多窗口一致性
+Install a published `.vsix` with the VS Code command:
 
-同一设备、同一 VS Code user profile 下的窗口共享一个连接 state file。实现边界是 best effort：
+1. Open the Command Palette.
+2. Run **Extensions: Install from VSIX...**.
+3. Select the Dinotty VSIX file and reload VS Code when prompted.
 
-- 同一 extension host 的操作串行执行；跨窗口写入通过有界 writer lease 减少普通碰撞。
-- writer 获得 lease 后会重新读取当前磁盘 envelope，再按 profile id 应用修改。
-- state 通过临时文件和 atomic rename 替换，读取方只接受完整、通过 schema/invariant 校验的 envelope。
-- 文件 watcher 尽力通知其他窗口；`Refresh Connections` 始终是事件延迟、合并或漏报时的显式重新读取入口。
-- 拿不到 lease 时当前写命令返回 busy，不会退化成无锁写入。
-- lease 不是 fencing。极端 stale-owner overlap 下允许最后完成的 atomic write 覆盖较早更新，不提供自动 merge、提交 lineage、强线性化或无丢失更新保证。
-
-读取暂时失败但当前窗口已有最后一个有效快照时，Connections 视图进入只读降级：仍可查看和连接已有 profile，但 Add/Edit/Delete 暂时禁用。没有有效快照时只保留 Refresh 和 Show Log。任何后续成功的 direct read、watcher refresh 或手动 Refresh 都会恢复正常状态。
-
-## Terminal 协议与生命周期
-
-- 完整解析 `snapshot_request`、replay、DEC synchronized output、remote resize 和 session exit 协议。
-- replay/sync 使用有界嵌套事务；中间帧不会直接写入 VS Code renderer。replay 以 `dimensions override -> RIS + frozen appearance + snapshot` 的顺序一次提交。
-- 分开维护 VS Code local capacity 和当前 render geometry。可容纳的远端网格使用 dimensions override；active 且 focused 的 terminal 遇到过大远端网格时会自动请求本地尺寸 snapshot，非活动 terminal 则暂停绘制，等到激活、panel 扩大或用户输入后恢复。
-- active 且 focused 的 VS Code terminal 在远端 geometry 或本地 resize barrier 下输入时，保证同一 WebSocket 上先发送 `snapshot_request(localCapacity)`，再发送 input。
-- transport 临时断开时只重连原 pane，采用 `1s -> 2s -> 4s -> 8s -> 15s -> 30s` 退避，最多 10 次或 5 分钟。鉴权失败、pane 不存在和 authoritative session exit 不重连。
-- 创建、连接和重连期间的输入使用有界队列；不会自动重发已经发送的用户输入。
-- 状态显示在带连接名称的 terminal title 和 active Dinotty terminal 的状态栏，不向 TUI alternate screen 注入诊断文字。
-- terminal close、创建失败、provider 取消和扩展停用都会幂等释放对应 PTY、listener、session 与 snapshot。
-
-## 外观
-
-`dinotty.terminalAppearanceMode` 只影响新建的 Dinotty terminal：
-
-| 值 | 默认 | 行为 |
-| --- | --- | --- |
-| `native` | 是 | 使用 VS Code terminal theme，不读取 `/api/settings`，不注入 OSC palette |
-| `base` | 否 | 冻结创建时读取的前景、背景和光标色，仅注入 OSC 10/11/12 |
-| `exact` | 否 | 在 `base` 基础上注入 OSC 4 的 ANSI 0-15 palette |
-
-旧设置 `dinotty.syncAppearanceFromDinotty` 已废弃。只有用户显式配置的 `true` 会映射为 `exact`；显式 `false` 或没有显式值均为 `native`。新 enum 始终优先。
-
-扩展不会修改 `terminal.integrated.*`、`workbench.colorCustomizations` 或任何全局/工作区 terminal font、contrast、theme 设置。
-
-## 已知协议限制
-
-Dinotty 当前多客户端 geometry 也是 best effort：
-
-- `snapshot_request` 引发的全局 PTY resize 当前不会向其他 endpoint 广播；其他客户端可能暂时保留旧网格。
-- 普通 `resize` 没有 origin applied acknowledgment，renderer 与 PTY 在服务端 debounce 窗口内可能短暂不一致。
-- 不同连接仍是最后一次 resize 生效；`snapshot_request -> input` 只保证同一个 VS Code WebSocket read loop 内的顺序，不能阻止另一个客户端插入 resize。
-- VS Code dimensions override 只能缩小逻辑网格，不能显示超过当前 panel capacity 的远端网格。active 且 focused 的 terminal 会自动切回本地尺寸；非活动 terminal 会停止增量绘制，等待激活、panel 扩大或用户输入后恢复。
-- `/api/settings` 是全局设置而非 per-session profile；`base/exact` 只冻结扩展创建 terminal 前读取到的值。
-
-严格多客户端 geometry 一致性需要 Dinotty 服务端协议改造，不属于本扩展当前范围。
-
-## 开发
+To build a VSIX from source:
 
 ```powershell
-npm install
-npm run check
+npm ci
 npm run package:vsix
 ```
 
-常用脚本：
+The package is written to `artifacts/dinotty-vscode.vsix`.
 
-- `npm run typecheck`：检查扩展源码。
-- `npm run test:typecheck`：严格检查源码和测试源码。
-- `npm run test:unit`：运行不依赖 VS Code runtime 的 Node 单元测试。
-- `npm run test:integration`：下载/缓存 VS Code `1.90.0` 并运行 extension-host smoke test。
-- `npm run bundle`：生成 production `dist/extension.js`。
-- `npm run package:vsix`：执行完整检查并生成 `artifacts/dinotty-vscode.vsix`。
+## Quick Start
 
-Linux CI 运行 extension-host tests 时需要 `xvfb-run`。发布包采用 allowlist，只包含 manifest、README、LICENSE、`media/` 和同次构建生成的 `dist/`。
+1. Select the Dinotty icon in the Activity Bar.
+2. Choose **Add Dinotty Connection**.
+3. Enter the Dinotty server URL, a local display name, and an optional access
+   code.
+4. Select the saved profile in the **Connections** view.
+5. Use the newly created terminal like any other VS Code integrated terminal.
+
+You can also run **Dinotty: Connect** from the Command Palette or select
+**Dinotty** from the terminal profile menu. When more than one profile exists,
+the extension asks which server to use.
+
+## What Happens When You Open a Terminal
+
+The extension performs the following sequence for every new terminal:
+
+1. Resolves a snapshot of the selected local connection profile.
+2. Optionally reads Dinotty appearance settings.
+3. Calls `POST /api/tabs` to create a new Dinotty tab and pane.
+4. Connects to that pane through `/ws?paneId=...`.
+5. Requests and renders a terminal snapshot at a compatible size.
+6. Forwards subsequent terminal input, output, and resize events.
+
+Closing the VS Code terminal disconnects its local WebSocket endpoint. It does
+not delete the Dinotty tab created on the server. Editing or deleting a saved
+profile also does not retarget terminals that are already open.
+
+When a local filesystem workspace is open, its first folder is used as the
+working directory for the new Dinotty tab. Remote SSH, WSL, and Dev Container
+paths are not translated into paths on the machine running Dinotty.
+
+## Connection Profiles and Security
+
+Connection profiles are local client configuration, not Dinotty server
+resources. A profile contains a display name, normalized server URL, ordering
+metadata, and an optional reference to a credential.
+
+- Profile metadata is stored in
+  `globalStorageUri/connection-store-v1.json`.
+- Access codes are stored only in VS Code SecretStorage under randomized slots.
+- A terminal freezes its resolved profile when it is created. Later profile
+  edits affect only new terminals.
+- A missing referenced secret is treated as an error; the extension never
+  silently retries the profile without authentication.
+- Access codes can be used over HTTP and HTTPS. Non-loopback plain HTTP requires
+  an explicit warning because credentials and terminal traffic are unencrypted;
+  use HTTPS for remote servers whenever possible.
+- HTTP and WebSocket authentication use `Authorization: Bearer <access-code>`.
+
+Profiles are shared by VS Code windows using the same user profile. Writes use
+an atomic state file and a bounded writer lease. Cross-window consistency is
+best effort rather than a distributed transaction: in an extreme stale-writer
+overlap, the last completed atomic write can win.
+
+## Terminal Behavior
+
+### Rendering and replay
+
+The extension understands Dinotty output, resize, reconnect, replay,
+synchronized-output, shell-info, and session-exit messages. Replay and nested
+synchronized output are buffered and committed as one frame so intermediate
+terminal states are not displayed.
+
+### Geometry
+
+VS Code panel capacity and Dinotty render geometry are tracked independently.
+A remote grid that fits can be displayed with a dimensions override. If an
+active, focused terminal receives an oversized remote grid, the extension asks
+Dinotty for a new snapshot at the local size. An inactive terminal pauses
+incremental rendering until it is activated, enlarged, or receives input.
+
+### Reconnection
+
+Temporary transport failures reconnect to the original pane after
+`1s`, `2s`, `4s`, `8s`, `15s`, and then `30s`. Retries stop after 10 attempts
+or 5 minutes. Authentication failures, missing panes, and authoritative session
+exits do not reconnect.
+
+Input entered while a terminal is being created, connected, or reconnected is
+held in a bounded queue. Input that was already sent is never replayed
+automatically.
+
+## Appearance
+
+Set `dinotty.terminalAppearanceMode` to control the appearance of newly opened
+Dinotty terminals:
+
+| Value | Default | Behavior |
+| --- | --- | --- |
+| `native` | Yes | Use the VS Code terminal theme and do not request Dinotty colors. |
+| `base` | No | Apply Dinotty foreground, background, and cursor colors. |
+| `exact` | No | Apply base colors and the Dinotty ANSI 0-15 palette. |
+
+The extension does not modify `terminal.integrated.*`,
+`workbench.colorCustomizations`, terminal fonts, contrast settings, or the
+global VS Code theme.
+
+The legacy `dinotty.syncAppearanceFromDinotty` setting is deprecated. An
+explicit `true` maps to `exact`, while `false` maps to `native`. The new setting
+always takes precedence.
+
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `Dinotty: Add Connection` | Save a local Dinotty server profile. |
+| `Dinotty: Connect` | Choose a profile and open a new Dinotty terminal. |
+| `Connect` | Open the selected profile from the Connections view. |
+| `Test Connection` | Validate HTTP reachability and authentication. |
+| `Set as Default` | Mark the profile shown first in the connection picker. |
+| `Edit Connection` | Update a profile or replace/clear its access code. |
+| `Delete Connection` | Remove a local profile without affecting open terminals. |
+| `Dinotty: Refresh Connections` | Reload shared profile state from disk. |
+| `Dinotty: Show Log` | Open the redacted Dinotty output channel. |
+
+## Known Limitations
+
+- The extension creates a new Dinotty tab and pane for every terminal; it does
+  not list, reopen, rename, split, or delete existing Dinotty resources.
+- Closing a VS Code terminal does not delete its remote Dinotty tab.
+- Remote workspace paths are not mapped to the Dinotty host.
+- Dinotty geometry is shared across clients on a last-resize-wins basis.
+  `snapshot_request` and resize events cannot provide strict multi-client
+  geometry consistency without additional server protocol support.
+- Appearance settings are global Dinotty settings, not per-session values, and
+  are frozen when a terminal is created.
+
+## Troubleshooting
+
+- Run **Dinotty: Test Connection** to check the selected URL and access code.
+- Open **Dinotty: Show Log** for redacted connection and protocol diagnostics.
+- If authentication fails, edit the profile and explicitly replace or clear
+  its saved access code.
+- If shared profile storage becomes temporarily unavailable, the Connections
+  view can continue using its last valid snapshot in read-only mode. Run
+  **Dinotty: Refresh Connections** after resolving the storage problem.
+
+## Development
+
+```powershell
+npm ci
+npm run check
+```
+
+Useful commands:
+
+| Command | Purpose |
+| --- | --- |
+| `npm run typecheck` | Type-check the extension source. |
+| `npm run test:typecheck` | Type-check source and test projects. |
+| `npm run test:unit` | Run Node-based unit tests. |
+| `npm run test:integration` | Run the VS Code extension-host smoke test. |
+| `npm run bundle` | Build `dist/extension.js` for production. |
+| `npm run package:vsix` | Run all checks and create the VSIX package. |
+
+The integration test downloads or reuses VS Code `1.90.0`. Linux CI requires
+`xvfb-run` for extension-host tests. The VSIX uses an allowlist and contains
+only the manifest, README, license, media assets, and the generated production
+bundle.
+
+## License
+
+MIT
