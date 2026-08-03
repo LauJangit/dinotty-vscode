@@ -272,9 +272,10 @@ test('stores, keeps, replaces, and clears credentials in commit-safe order', asy
 
   await store.add({
     name: 'Remote',
-    serverUrl: 'https://remote.example.com',
+    serverUrl: 'http://remote.example.com',
     accessToken: 'first-token'
   });
+  assert.equal(readEnvelope(stateFile).profiles[0].serverUrl, 'http://remote.example.com');
   assert.equal(readEnvelope(stateFile).profiles[0].credentialSlot, SLOT_1);
   assert.deepEqual(secrets.stores, [[connectionCredentialKey(SLOT_1), 'first-token']]);
   assertBefore(events, `secret:store:${connectionCredentialKey(SLOT_1)}`, 'state:write');
@@ -282,9 +283,10 @@ test('stores, keeps, replaces, and clears credentials in commit-safe order', asy
   resetActivity(stateFile, secrets, events);
   await store.update(PROFILE_1, {
     name: 'Remote kept',
-    serverUrl: 'https://remote.example.com/v2',
+    serverUrl: 'http://remote.example.com/v2',
     credential: { kind: 'keep' }
   });
+  assert.equal(readEnvelope(stateFile).profiles[0].serverUrl, 'http://remote.example.com/v2');
   assert.equal(readEnvelope(stateFile).profiles[0].credentialSlot, SLOT_1);
   assert.deepEqual(secrets.gets, [connectionCredentialKey(SLOT_1)]);
   assert.deepEqual(secrets.stores, []);

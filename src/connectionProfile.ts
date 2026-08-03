@@ -62,7 +62,6 @@ export type ConnectionProfileValidationCode =
   | 'access_token_too_long'
   | 'access_token_forbidden_characters'
   | 'access_token_invalid_header_value'
-  | 'access_token_requires_secure_transport'
   | 'connection_store_invalid';
 
 export class ConnectionProfileValidationError extends Error {
@@ -167,14 +166,15 @@ export function normalizeAccessToken(value: string, allowEmpty = true): string |
 }
 
 export function validateConnectionSecurity(serverUrl: string, accessToken?: string): void {
-  const normalizedUrl = normalizeServerUrl(serverUrl);
-  const normalizedToken = accessToken === undefined ? undefined : normalizeAccessToken(accessToken);
-  if (normalizedToken && new URL(normalizedUrl).protocol === 'http:' && !isLoopbackHostname(new URL(normalizedUrl).hostname)) {
-    throw validationError(
-      'access_token_requires_secure_transport',
-      'Access tokens require HTTPS unless the server is on the local loopback interface.'
-    );
+  normalizeServerUrl(serverUrl);
+  if (accessToken !== undefined) {
+    normalizeAccessToken(accessToken);
   }
+}
+
+export function isRemotePlainHttp(serverUrl: string): boolean {
+  const url = new URL(normalizeServerUrl(serverUrl));
+  return url.protocol === 'http:' && !isLoopbackHostname(url.hostname);
 }
 
 export function isCanonicalUuid(value: unknown): value is string {
@@ -215,9 +215,6 @@ export function validateConnectionStoreEnvelope(value: unknown): ConnectionStore
         throw invalidStoreError();
       }
       credentialSlots.add(parsed.credentialSlot);
-      if (new URL(parsed.serverUrl).protocol === 'http:' && !isLoopbackHostname(new URL(parsed.serverUrl).hostname)) {
-        throw invalidStoreError();
-      }
     }
     return parsed;
   });

@@ -3,6 +3,7 @@ import {
   CredentialChange,
   DinottyConnectionProfile,
   ConnectionProfileValidationError,
+  isRemotePlainHttp,
   normalizeAccessToken,
   normalizeConnectionName,
   normalizeServerUrl,
@@ -129,11 +130,11 @@ export class ConnectionCommands implements vscode.Disposable {
 
     if (isRemotePlainHttp(serverUrl)) {
       const choice = await vscode.window.showWarningMessage(
-        'This connection uses unencrypted HTTP. Traffic can be observed or changed in transit.',
+        'This connection uses unencrypted HTTP. Any access code and terminal traffic can be observed or changed in transit.',
         { modal: true },
-        'Save Without Access Code'
+        'Save Anyway'
       );
-      if (choice !== 'Save Without Access Code' || token?.isCancellationRequested || this.disposed) {
+      if (choice !== 'Save Anyway' || token?.isCancellationRequested || this.disposed) {
         return undefined;
       }
     }
@@ -202,11 +203,11 @@ export class ConnectionCommands implements vscode.Disposable {
     }
     if (isRemotePlainHttp(serverUrl)) {
       const choice = await vscode.window.showWarningMessage(
-        'This connection uses unencrypted HTTP. Traffic can be observed or changed in transit.',
+        'This connection uses unencrypted HTTP. Any access code and terminal traffic can be observed or changed in transit.',
         { modal: true },
-        'Save Without Access Code'
+        'Save Anyway'
       );
-      if (choice !== 'Save Without Access Code') {
+      if (choice !== 'Save Anyway') {
         return;
       }
     }
@@ -462,18 +463,6 @@ function validateTokenInput(serverUrl: string, value: string, allowEmpty: boolea
 
 function validationMessage(error: unknown): string {
   return error instanceof ConnectionProfileValidationError ? error.message : 'The value is invalid.';
-}
-
-function isRemotePlainHttp(serverUrl: string): boolean {
-  if (new URL(serverUrl).protocol !== 'http:') {
-    return false;
-  }
-  try {
-    validateConnectionSecurity(serverUrl, 'probe');
-    return false;
-  } catch {
-    return true;
-  }
 }
 
 function profileIdFromTarget(target: unknown): string | undefined {

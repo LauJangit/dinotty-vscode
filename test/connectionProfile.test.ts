@@ -4,6 +4,7 @@ import {
   ConnectionProfileValidationError,
   connectionNameKey,
   isCanonicalUuid,
+  isRemotePlainHttp,
   normalizeAccessToken,
   normalizeConnectionName,
   normalizeServerUrl,
@@ -77,17 +78,31 @@ test('normalizes optional tokens and enforces replacement, byte, character, and 
   });
 });
 
-test('allows access tokens only over HTTPS or recognized loopback HTTP hosts', () => {
-  for (const url of ['http://localhost:8999', 'http://127.0.0.1', 'http://127.255.255.255', 'http://[::1]']) {
+test('allows access tokens over HTTP and HTTPS while preserving token validation', () => {
+  for (const url of [
+    'http://localhost:8999',
+    'http://127.0.0.1',
+    'http://127.255.255.255',
+    'http://[::1]',
+    'http://192.168.1.10:8999',
+    'http://example.com',
+    'https://example.com'
+  ]) {
     assert.doesNotThrow(() => validateConnectionSecurity(url, 'token'));
   }
   assert.doesNotThrow(() => validateConnectionSecurity('http://example.com'));
-  assert.doesNotThrow(() => validateConnectionSecurity('https://example.com', 'token'));
+  assert.throws(
+    () => validateConnectionSecurity('http://example.com', 'invalid token'),
+    ConnectionProfileValidationError
+  );
+});
 
-  for (const url of ['http://example.com', 'http://localhost.', 'http://128.0.0.1']) {
-    assert.throws(() => validateConnectionSecurity(url, 'token'), (error: unknown) => {
-      return hasCode(error, 'access_token_requires_secure_transport');
-    });
+test('identifies non-loopback plain HTTP connections for transport warnings', () => {
+  for (const url of ['https://example.com', 'http://localhost:8999', 'http://127.0.0.1', 'http://127.255.255.255', 'http://[::1]']) {
+    assert.equal(isRemotePlainHttp(url), false);
+  }
+  for (const url of ['http://192.168.1.10:8999', 'http://example.com', 'http://localhost.', 'http://128.0.0.1']) {
+    assert.equal(isRemotePlainHttp(url), true);
   }
 });
 
@@ -107,7 +122,7 @@ test('validates, copies, and freezes a complete connection store envelope', () =
       {
         id: PROFILE_ID,
         name: 'Local',
-        serverUrl: 'http://127.0.0.1:8999',
+        serverUrl: 'http://192.168.1.10:8999',
         createdAt: 1,
         updatedAt: 2,
         credentialSlot: SLOT_ID
@@ -158,7 +173,6 @@ test('rejects malformed store envelopes and cross-profile invariant violations',
     { ...validEnvelope, profiles: [{ ...validProfile, name: ' Local ' }] },
     { ...validEnvelope, profiles: [{ ...validProfile, serverUrl: 'HTTP://127.0.0.1:8999/' }] },
     { ...validEnvelope, profiles: [{ ...validProfile, updatedAt: 0 }] },
-    { ...validEnvelope, profiles: [{ ...validProfile, serverUrl: 'http://example.com' }] },
     { ...validEnvelope, profiles: [validProfile, { ...validProfile }] },
     {
       ...validEnvelope,
