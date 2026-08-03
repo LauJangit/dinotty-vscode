@@ -1,8 +1,10 @@
 {
   "name": "dinotty-vscode",
   "displayName": "Dinotty",
-  "description": "Connect VS Code terminals to Dinotty sessions.",
+  "description": "Manage Dinotty connections and open Dinotty sessions in VS Code terminals.",
   "version": "0.0.1",
+  "publisher": "dinotty",
+  "license": "MIT",
   "engines": {
     "vscode": "^1.90.0"
   },
@@ -12,19 +14,48 @@
   "categories": [
     "Other"
   ],
+  "keywords": [
+    "terminal",
+    "dinotty",
+    "remote"
+  ],
   "main": "./dist/extension.js",
+  "files": [
+    "dist/**",
+    "media/**",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "compile": "tsc -p ./",
     "typecheck": "tsc -p ./",
-    "test": "node test/run-tests.js",
-    "check": "npm run typecheck && npm test && npm run package",
+    "test:typecheck": "tsc -p test/tsconfig.json",
+    "test:unit": "node test/run-tests.js",
+    "pretest:integration": "npm run bundle",
+    "test:integration": "node test/run-extension-tests.js",
+    "test": "npm run test:typecheck && npm run test:unit && npm run test:integration",
+    "bundle": "node esbuild.js --production",
+    "package": "npm run bundle",
+    "check": "npm run typecheck && npm test && npm run bundle",
     "watch": "tsc -watch -p ./",
-    "package": "node esbuild.js --production"
+    "vscode:prepublish": "npm run bundle",
+    "package:list": "vsce ls",
+    "prepare:artifacts": "node -e \"require('fs').mkdirSync('artifacts',{recursive:true})\"",
+    "prepackage:vsix": "npm run check && npm run package:list && npm run prepare:artifacts",
+    "package:vsix": "vsce package --no-dependencies --allow-missing-repository --out artifacts/dinotty-vscode.vsix"
   },
   "activationEvents": [
+    "onView:dinotty.connections",
     "onTerminalProfile:dinotty.terminal",
-    "onCommand:dinotty.configureServer",
-    "onCommand:dinotty.testConnection"
+    "onCommand:dinotty.addConnection",
+    "onCommand:dinotty.connect",
+    "onCommand:dinotty.connectProfile",
+    "onCommand:dinotty.editConnection",
+    "onCommand:dinotty.deleteConnection",
+    "onCommand:dinotty.testProfile",
+    "onCommand:dinotty.setDefaultConnection",
+    "onCommand:dinotty.refreshConnections",
+    "onCommand:dinotty.showLog"
   ],
   "contributes": {
     "terminal": {
@@ -35,24 +66,153 @@
         }
       ]
     },
-    "commands": [
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "dinotty",
+          "title": "Dinotty",
+          "icon": "media/dinotty-activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "dinotty": [
+        {
+          "id": "dinotty.connections",
+          "name": "Connections"
+        }
+      ]
+    },
+    "viewsWelcome": [
       {
-        "command": "dinotty.configureServer",
-        "title": "Dinotty: Configure Server"
+        "view": "dinotty.connections",
+        "contents": "No Dinotty connections yet.\n[Add Dinotty Connection](command:dinotty.addConnection)",
+        "when": "dinotty.connectionStoreAvailable && dinotty.connectionStoreWritable && dinotty.connectionCount == 0"
       },
       {
-        "command": "dinotty.testConnection",
-        "title": "Dinotty: Test Connection"
+        "view": "dinotty.connections",
+        "contents": "The last validated connection list is temporarily read-only.\n[Refresh](command:dinotty.refreshConnections)",
+        "when": "dinotty.connectionStoreAvailable && !dinotty.connectionStoreWritable && dinotty.connectionCount == 0"
+      },
+      {
+        "view": "dinotty.connections",
+        "contents": "Dinotty connections could not be loaded.\n[Refresh](command:dinotty.refreshConnections) or [Show Dinotty Log](command:dinotty.showLog)",
+        "when": "!dinotty.connectionStoreAvailable"
       }
     ],
+    "commands": [
+      {
+        "command": "dinotty.addConnection",
+        "title": "Dinotty: Add Connection",
+        "icon": "$(add)",
+        "enablement": "dinotty.connectionStoreWritable"
+      },
+      {
+        "command": "dinotty.connect",
+        "title": "Dinotty: Connect",
+        "enablement": "dinotty.connectionStoreAvailable"
+      },
+      {
+        "command": "dinotty.connectProfile",
+        "title": "Connect",
+        "enablement": "dinotty.connectionStoreAvailable"
+      },
+      {
+        "command": "dinotty.editConnection",
+        "title": "Edit Connection",
+        "enablement": "dinotty.connectionStoreWritable"
+      },
+      {
+        "command": "dinotty.deleteConnection",
+        "title": "Delete Connection",
+        "enablement": "dinotty.connectionStoreWritable"
+      },
+      {
+        "command": "dinotty.testProfile",
+        "title": "Test Connection",
+        "enablement": "dinotty.connectionStoreAvailable"
+      },
+      {
+        "command": "dinotty.setDefaultConnection",
+        "title": "Set as Default",
+        "enablement": "dinotty.connectionStoreWritable"
+      },
+      {
+        "command": "dinotty.refreshConnections",
+        "title": "Dinotty: Refresh Connections",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "dinotty.showLog",
+        "title": "Dinotty: Show Log"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "dinotty.addConnection",
+          "when": "view == dinotty.connections && dinotty.connectionStoreWritable",
+          "group": "navigation@1"
+        },
+        {
+          "command": "dinotty.refreshConnections",
+          "when": "view == dinotty.connections",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "dinotty.connectProfile",
+          "when": "view == dinotty.connections && (viewItem == dinotty.connection || viewItem == dinotty.connection.default) && dinotty.connectionStoreAvailable",
+          "group": "inline@1"
+        },
+        {
+          "command": "dinotty.testProfile",
+          "when": "view == dinotty.connections && (viewItem == dinotty.connection || viewItem == dinotty.connection.default) && dinotty.connectionStoreAvailable",
+          "group": "1_connection@1"
+        },
+        {
+          "command": "dinotty.setDefaultConnection",
+          "when": "view == dinotty.connections && viewItem == dinotty.connection && dinotty.connectionStoreWritable",
+          "group": "1_connection@2"
+        },
+        {
+          "command": "dinotty.editConnection",
+          "when": "view == dinotty.connections && (viewItem == dinotty.connection || viewItem == dinotty.connection.default) && dinotty.connectionStoreWritable",
+          "group": "2_manage@1"
+        },
+        {
+          "command": "dinotty.deleteConnection",
+          "when": "view == dinotty.connections && (viewItem == dinotty.connection || viewItem == dinotty.connection.default) && dinotty.connectionStoreWritable",
+          "group": "2_manage@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "dinotty.connectProfile",
+          "when": "false"
+        },
+        {
+          "command": "dinotty.editConnection",
+          "when": "false"
+        },
+        {
+          "command": "dinotty.deleteConnection",
+          "when": "false"
+        },
+        {
+          "command": "dinotty.testProfile",
+          "when": "false"
+        },
+        {
+          "command": "dinotty.setDefaultConnection",
+          "when": "false"
+        }
+      ]
+    },
     "configuration": {
       "title": "Dinotty",
       "properties": {
-        "dinotty.serverUrl": {
-          "type": "string",
-          "default": "http://127.0.0.1:8999",
-          "description": "Dinotty backend server URL."
-        },
         "dinotty.terminalAppearanceMode": {
           "type": "string",
           "enum": [
@@ -78,12 +238,18 @@
     }
   },
   "dependencies": {
+    "proper-lockfile": "^4.1.2",
+    "write-file-atomic": "^5.0.1",
     "ws": "^8"
   },
   "devDependencies": {
     "@types/node": "^20",
+    "@types/proper-lockfile": "^4.1.4",
     "@types/vscode": "1.90.0",
+    "@types/write-file-atomic": "^4.0.3",
     "@types/ws": "^8",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.25",
     "typescript": "^5"
   }

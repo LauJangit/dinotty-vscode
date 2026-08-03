@@ -1,3 +1,7 @@
 node_modules/
 dist/
 DINOTTY_CONNECTION_EXPLORER_PLAN.md
+.test-dist/
+.test-integration-dist/
+.vscode-test/
+artifacts/

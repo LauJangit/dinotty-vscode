@@ -1,0 +1,17 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    "types": ["node", "vscode"]
+  },
+  "include": [
+    "../src/**/*.ts",
+    "./**/*.ts"
+  ],
+  "exclude": [
+    "../node_modules",
+    "../.test-dist",
+    "../.test-integration-dist"
+  ]
+}

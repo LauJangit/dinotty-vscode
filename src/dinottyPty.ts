@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import WebSocket = require('ws');
 import { AuthenticationError, ConnectionError, DinottyClient, HttpError, formatError } from './dinottyClient';
 import { LocalTerminalAppearance, TerminalAppearanceMode, resolveLocalTerminalAppearance } from './appearance';
-import { describeServerMessageType, encodeClientMessage, Geometry, parseServerMessage } from './protocol';
+import { encodeClientMessage, Geometry, parseServerMessage } from './protocol';
 import { TerminalEffect, TerminalEvent, TerminalStateMachine } from './terminalState';
 
 const WS_CONNECT_TIMEOUT_MS = 15_000;
@@ -11,11 +11,14 @@ const MAX_RECONNECT_WINDOW_MS = 5 * 60_000;
 const RECONNECT_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
 const RIS = '\x1bc';
 
-interface DinottyPtyOptions {
+export interface DinottyPtyOptions {
   client: DinottyClient;
+  profileId: string;
+  profileName: string;
   cwd?: string;
   appearanceMode?: TerminalAppearanceMode;
   logger?: (message: string) => void;
+  onAuthenticationFailure?: (profile: { readonly id: string; readonly name: string }) => void;
 }
 
 export class DinottyPty implements vscode.Pseudoterminal, vscode.Disposable {
@@ -43,6 +46,7 @@ export class DinottyPty implements vscode.Pseudoterminal, vscode.Disposable {
   private reconnectAttempts = 0;
   private reconnectStartedAt = 0;
   private status = '';
+  private authenticationFailureReported = false;
   private appearance: LocalTerminalAppearance = resolveLocalTerminalAppearance('native');
 
   constructor(private readonly options: DinottyPtyOptions) {}
@@ -91,6 +95,10 @@ export class DinottyPty implements vscode.Pseudoterminal, vscode.Disposable {
     return this.status;
   }
 
+  getProfileName(): string {
+    return this.options.profileName;
+  }
+
   private async createAndConnect(signal: AbortSignal): Promise<void> {
     this.applyEffects(this.machine.dispatch({ type: 'transport_connecting' }));
     try {
@@ -113,7 +121,7 @@ export class DinottyPty implements vscode.Pseudoterminal, vscode.Disposable {
         return;
       }
       this.paneId = tab.pane_id;
-      this.options.logger?.(`Created Dinotty tab and pane ${tab.pane_id}`);
+      this.options.logger?.('Created a new Dinotty tab and pane.');
       this.reconnectStartedAt = Date.now();
       this.connectWebSocket(tab.pane_id);
     } catch (error) {
@@ -122,7 +130,8 @@ export class DinottyPty implements vscode.Pseudoterminal, vscode.Disposable {
       }
       this.options.logger?.(`Failed to create Dinotty tab: ${formatError(error)}`);
       if (error instanceof AuthenticationError) {
-        this.failAndClose('Authentication failed. Run "Dinotty: Configure Server" to update the token.');
+        this.reportAuthenticationFailure();
+        this.failAndClose('Authentication failed. Edit this connection to update its access code.', false);
       } else if (error instanceof ConnectionError) {
         this.failAndClose('Could not connect to the Dinotty server.');
       } else {
@@ -142,7 +151,7 @@ export class DinottyPty implements vscode.Pseudoterminal, vscode.Disposable {
       if (!this.isCurrentGeneration(generation)) {
         return;
       }
-      this.options.logger?.(`Connecting WebSocket to ${connection.redactedUrl}`);
+      this.options.logger?.('Connecting the Dinotty WebSocket.');
       const ws = new WebSocket(connection.url, connection.headers ? { headers: connection.headers } : undefined);
       this.ws = ws;
       let terminalFailure = false;
@@ -164,10 +173,12 @@ export class DinottyPty implements vscode.Pseudoterminal, vscode.Disposable {
         response.resume();
         this.options.logger?.(`WebSocket upgrade rejected with HTTP ${status}`);
         if (status === 401 || status === 403) {
+          this.reportAuthenticationFailure();
           this.setStatus('Dinotty authentication failed.');
         } else if (status === 404) {
           this.setStatus('The Dinotty pane no longer exists.');
         }
+        ws.terminate();
       });
 
       ws.on('open', () => {
@@ -217,7 +228,10 @@ export class DinottyPty implements vscode.Pseudoterminal, vscode.Disposable {
       }
       this.options.logger?.(`Could not prepare WebSocket connection: ${formatError(error)}`);
       if (error instanceof AuthenticationError || (error instanceof HttpError && error.statusCode === 404)) {
-        this.failAndClose(formatError(error));
+        if (error instanceof AuthenticationError) {
+          this.reportAuthenticationFailure();
+        }
+        this.failAndClose(formatError(error), !(error instanceof AuthenticationError));
       } else {
         this.scheduleReconnect();
       }
@@ -227,7 +241,7 @@ export class DinottyPty implements vscode.Pseudoterminal, vscode.Disposable {
   private handleMessage(raw: string): void {
     const message = parseServerMessage(raw);
     if (!message) {
-      this.options.logger?.(`Ignored unknown server message type: ${describeServerMessageType(raw)}`);
+      this.options.logger?.('Ignored an unsupported Dinotty server message.');
       return;
     }
 
@@ -247,7 +261,7 @@ export class DinottyPty implements vscode.Pseudoterminal, vscode.Disposable {
         event = message;
         break;
       case 'shell_info':
-        this.options.logger?.(`Received shell information: ${message.shell_type || 'unknown'}`);
+        this.options.logger?.('Received Dinotty shell information.');
         return;
       case 'session_exit':
         this.authoritativeEnd = true;
@@ -340,9 +354,11 @@ export class DinottyPty implements vscode.Pseudoterminal, vscode.Disposable {
     }, delay));
   }
 
-  private failAndClose(message: string): void {
+  private failAndClose(message: string, showNotification = true): void {
     this.setStatus(message);
-    void vscode.window.showErrorMessage(`Dinotty: ${message}`);
+    if (showNotification) {
+      void vscode.window.showErrorMessage(`Dinotty: ${message}`);
+    }
     this.endSession();
   }
 
@@ -364,7 +380,15 @@ export class DinottyPty implements vscode.Pseudoterminal, vscode.Disposable {
     }
     this.status = status;
     this.statusEmitter.fire(status);
-    this.changeNameEmitter.fire(status ? `Dinotty - ${status}` : 'Dinotty');
+    this.changeNameEmitter.fire(status ? `Dinotty: ${this.options.profileName} (${status})` : `Dinotty: ${this.options.profileName}`);
+  }
+
+  private reportAuthenticationFailure(): void {
+    if (this.authenticationFailureReported) {
+      return;
+    }
+    this.authenticationFailureReported = true;
+    this.options.onAuthenticationFailure?.({ id: this.options.profileId, name: this.options.profileName });
   }
 
   private isCurrentGeneration(generation: number): boolean {
