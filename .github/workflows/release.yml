@@ -1,4 +1,4 @@
-name: Build and Release VSIX
+name: Package
 
 on:
   workflow_dispatch:
