@@ -1,0 +1,87 @@
+name: Build and Release VSIX
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: vsix-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build VSIX
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Resolve package metadata
+        id: package
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          expected_tag="v${version}"
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "${expected_tag}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package.json version ${version}." >&2
+            echo "Expected tag: ${expected_tag}" >&2
+            exit 1
+          fi
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "asset_name=dinotty-vscode-${version}.vsix" >> "${GITHUB_OUTPUT}"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and verify VSIX
+        run: xvfb-run -a npm run package:vsix
+
+      - name: Name release asset
+        shell: bash
+        run: mv artifacts/dinotty-vscode.vsix "artifacts/${{ steps.package.outputs.asset_name }}"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dinotty-vscode-${{ steps.package.outputs.version }}
+          path: artifacts/${{ steps.package.outputs.asset_name }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create or update GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ASSET_PATH: artifacts/${{ steps.package.outputs.asset_name }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${ASSET_PATH}" --clobber
+            exit 0
+          fi
+
+          release_flags=()
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
+
+          gh release create "${GITHUB_REF_NAME}" "${ASSET_PATH}" \
+            --verify-tag \
+            --generate-notes \
+            --title "Dinotty for VS Code ${GITHUB_REF_NAME}" \
+            "${release_flags[@]}"
