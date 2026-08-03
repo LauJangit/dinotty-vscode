@@ -46,7 +46,7 @@ Dinotty VS Code 在 VS Code 中管理多个 Dinotty 连接，并把每个连接�
 
 - 完整解析 `snapshot_request`、replay、DEC synchronized output、remote resize 和 session exit 协议。
 - replay/sync 使用有界嵌套事务；中间帧不会直接写入 VS Code renderer。replay 以 `dimensions override -> RIS + frozen appearance + snapshot` 的顺序一次提交。
-- 分开维护 VS Code local capacity 和当前 render geometry。可容纳的远端网格使用 dimensions override；过大的远端网格暂停绘制，并通过新 snapshot 恢复。
+- 分开维护 VS Code local capacity 和当前 render geometry。可容纳的远端网格使用 dimensions override；active 且 focused 的 terminal 遇到过大远端网格时会自动请求本地尺寸 snapshot，非活动 terminal 则暂停绘制，等到激活、panel 扩大或用户输入后恢复。
 - active 且 focused 的 VS Code terminal 在远端 geometry 或本地 resize barrier 下输入时，保证同一 WebSocket 上先发送 `snapshot_request(localCapacity)`，再发送 input。
 - transport 临时断开时只重连原 pane，采用 `1s -> 2s -> 4s -> 8s -> 15s -> 30s` 退避，最多 10 次或 5 分钟。鉴权失败、pane 不存在和 authoritative session exit 不重连。
 - 创建、连接和重连期间的输入使用有界队列；不会自动重发已经发送的用户输入。
@@ -74,7 +74,7 @@ Dinotty 当前多客户端 geometry 也是 best effort：
 - `snapshot_request` 引发的全局 PTY resize 当前不会向其他 endpoint 广播；其他客户端可能暂时保留旧网格。
 - 普通 `resize` 没有 origin applied acknowledgment，renderer 与 PTY 在服务端 debounce 窗口内可能短暂不一致。
 - 不同连接仍是最后一次 resize 生效；`snapshot_request -> input` 只保证同一个 VS Code WebSocket read loop 内的顺序，不能阻止另一个客户端插入 resize。
-- VS Code dimensions override 只能缩小逻辑网格，不能显示超过当前 panel capacity 的远端网格。此时扩展会停止增量绘制，等待 panel 扩大或用户输入切回本地尺寸。
+- VS Code dimensions override 只能缩小逻辑网格，不能显示超过当前 panel capacity 的远端网格。active 且 focused 的 terminal 会自动切回本地尺寸；非活动 terminal 会停止增量绘制，等待激活、panel 扩大或用户输入后恢复。
 - `/api/settings` 是全局设置而非 per-session profile；`base/exact` 只冻结扩展创建 terminal 前读取到的值。
 
 严格多客户端 geometry 一致性需要 Dinotty 服务端协议改造，不属于本扩展当前范围。

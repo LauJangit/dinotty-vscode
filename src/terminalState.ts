@@ -113,9 +113,11 @@ export class TerminalStateMachine {
         break;
       case 'active_changed':
         this.active = event.active;
+        this.resumeSuspendedTerminalIfActive(effects);
         break;
       case 'window_focus_changed':
         this.windowFocused = event.focused;
+        this.resumeSuspendedTerminalIfActive(effects);
         break;
       case 'reconnected':
         this.reconnectedReceived = true;
@@ -224,7 +226,7 @@ export class TerminalStateMachine {
       return;
     }
     if (this.renderState === 'ready_remote' && this.remoteGeometry && !this.fits(this.remoteGeometry)) {
-      this.suspend(effects);
+      this.handleOversizedRemote(effects);
       return;
     }
     if (this.renderState === 'suspended_geometry' && this.remoteGeometry && this.fits(this.remoteGeometry)) {
@@ -240,7 +242,7 @@ export class TerminalStateMachine {
       return;
     }
     if (!this.fits(geometry)) {
-      this.suspend(effects);
+      this.handleOversizedRemote(effects);
       return;
     }
     if (this.outputWasDropped || this.renderState === 'suspended_geometry' || this.renderState === 'renderer_invalid') {
@@ -381,7 +383,7 @@ export class TerminalStateMachine {
         this.nextSnapshot = null;
         this.clearTransactionFields();
         if (reason === 'resume_remote') {
-          this.suspend(effects);
+          this.handleOversizedRemote(effects);
         } else if (next) {
           this.requestSnapshot(next.geometry, next.reason, effects);
         } else if (this.localCapacity) {
@@ -435,7 +437,7 @@ export class TerminalStateMachine {
       return;
     }
     if (this.remoteGeometry && !this.fits(this.remoteGeometry)) {
-      this.suspend(effects);
+      this.handleOversizedRemote(effects);
       return;
     }
     const geometry = this.remoteGeometry ?? this.localCapacity;
@@ -448,6 +450,29 @@ export class TerminalStateMachine {
     this.renderState = 'suspended_geometry';
     this.outputWasDropped = true;
     effects.push({ type: 'set_status', status: 'Remote terminal is larger than this panel. Type to switch to the local size.' });
+  }
+
+  private handleOversizedRemote(effects: TerminalEffect[]): void {
+    if (this.canClaimLocalGeometry()) {
+      this.requestSnapshot(this.localCapacity!, 'size_mismatch', effects);
+      return;
+    }
+    this.suspend(effects);
+  }
+
+  private resumeSuspendedTerminalIfActive(effects: TerminalEffect[]): void {
+    if (
+      this.renderState === 'suspended_geometry' &&
+      this.remoteGeometry &&
+      !this.fits(this.remoteGeometry) &&
+      this.canClaimLocalGeometry()
+    ) {
+      this.requestSnapshot(this.localCapacity!, 'size_mismatch', effects);
+    }
+  }
+
+  private canClaimLocalGeometry(): boolean {
+    return this.transportState === 'open' && this.active && this.windowFocused && this.localCapacity !== null;
   }
 
   private fits(geometry: Geometry): boolean {
